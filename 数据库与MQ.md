@@ -32,10 +32,10 @@
 3. MQ 用户管理：
     - 可以在后台直接配置，也可以使用 rabbitmqctl 命令来写
     - 步骤：
-        1: 配置用户
-        2：配置用户权限[permission]
-        3：一个用户的permission权限包含如下字段：Virtual host, Configure regexpm, Write regexp, Read regexp 
-        4: 默认 permission 权限例子如下：Virtual host(/), Configure regexp(.*), Write regexp(.*), Read regexp(.*)
+       1. 配置用户
+       2. 配置用户权限[permission]
+       3. 一个用户的permission权限包含如下字段：Virtual host, Configure regexpm, Write regexp, Read regexp 
+       4. 默认 permission 权限例子如下：Virtual host(/), Configure regexp(.*), Write regexp(.*), Read regexp(.*)
     - 参考网址[https://blog.csdn.net/becivells/article/details/52044654]
     - 参考网址[https://www.cnblogs.com/lori/p/7852534.html]
 4. 
