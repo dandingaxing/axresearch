@@ -1,0 +1,937 @@
+
+## Elasticsearch 安装
+- PS 注: es5之后已经不允许用root启动了，这个参数已经不生效了，想用root启动es5、除非改源码重新编译
+- 如果要启动, 需要新增用户, 并将 es 权限划分到那个特定的用户下, 然后用那个用户启动, 而不可以直接使用root启动
+- 启动参考连接[https://blog.csdn.net/showhilllee/article/details/53404042] PS 注: 这里并没有给 用户 elsearch 设置密码, 正常应该设置密码的, 这里是为了方便忽略了
+
+
+## Elasticsearch 在线手册 与 API命令格式
+1. ES权威手册[https://es.xiaoleilu.com/]
+2. 一般命令格式 ``` curl -X<VERB GET|POST|PUT|HEAD|DELETE> '<PROTOCOL>://<HOST>/<PATH\>?<QUERY_STRING>' -d '<BODY>' ```
+    - VERB HTTP方法： GET , POST , PUT , HEAD , DELETE
+    - PROTOCOL http或者https协议（只有在Elasticsearch前面有https代理的时候可用）
+    - HOST Elasticsearch集群中的任何一个节点的主机名， 如果是在本地的节点， 那么就叫localhost
+    - PORT Elasticsearch HTTP服务所在的端口， 默认为9200
+    - QUERY_STRING 一些可选的查询请求参数， 例如 ?pretty 参数将使请求返回更加美观易读的JSON数据
+    - BODY 一个JSON格式的请求主体（如果请求需要的话）
+    - 例: ```curl -XGET http://10.70.93.94:9200/jinrong_person_credit/_mapping```
+3. 查看版本: ```curl -XGET http://10.70.93.94:9200```
+
+## Elasticsearch 常用命令
+ 1. 查看索引状态: ```/_cat```
+    - 例: ```curl -XGET http://10.70.93.94:9200/_cat```
+    - 查询 ```_cat``` 命令的详细情况, 列出```_cat``` 开头的命令有哪些
+    - 比如 ```/_cat/count``` 查询文档总数; ```/_cat/count/{index}``` 查看某个表的文档总数
+    - 比如 ```/_cat/indices``` 列出所有索引(表), 查看索引(表)状态
+    - 比如 ```/_cat/health``` 查看服务器健康情况
+ 2. 查看mapping 索引结构,类似表结构: ```/_mapping```
+    - 例: ```curl -XGET http://10.70.93.94:9200/_mapping/?pretty```
+    - 查询所有表的表结构
+    - 例: ```curl -XGET http://10.70.93.94:9200/jinrong_person_credit/_mapping/?pretty```
+    - 查询```jinrong_person_credit```表的表结构
+ 3. 删除index
+    - 例: ```curl -XDELETE http://localhost:9200/logstash-event-login?pretty```
+    - 删除logstash-event-login表
+ 4. 备份和恢复 使用 es 提供的 snapshot(快照) 功能
+    - 首先需要编辑config/elasticsearch.yml文件增加备份存储库的位置。比如path.repo: /tmp
+    - 建立repo
+        ```
+            curl -XPUT 'http://localhost:9200/_snapshot/my_repository' -d '
+            {
+                "type": "fs",
+                "settings": {
+                    "location": "/tmp/my_repository",
+                    "compress": true
+                }
+            }'
+        ```
+    - 创建 snapshot
+        ```
+            curl -XPUT "http://localhost:9200/_snapshot/my_repository/snap_1?wait_for_completion=true" -d '
+            {
+                "indices": "logstash-event-login,logstash-event-view",
+                "ignore_unavailable": "true",
+                "include_global_state": false
+            }'
+        ```
+    - wait_for_completion参数表示会等到snapshot完成才返回，不加这个参数也可以通过其他接口获取到快照的进度
+        ```
+            curl -XGET "http://localhost:9200/_snapshot/my_repository/snap_1/_status?pretty"
+        ```
+    - 查看 snapshot
+        ```
+            curl -XGET 'http://localhost:9200/_snapshot/my_repository/snap_1?pretty'
+        ```
+    - 删除快照
+        ```
+            curl -XDELETE 'http://localhost:9200/_snapshot/my_repository/snap_1'
+        ```
+    - 查看所有快照
+        ```
+            curl -XGET 'http://localhost:9200/_snapshot/my_repository/_all?pretty'
+        ```
+    - 恢复 snapshot
+        ```
+            curl -XPOST "http://localhost:9200/_snapshot/my_repository/snap_1/_restore?wait_for_completion=true&pretty" -d '
+            {
+                "indices": "logstash-event-login",
+                "ignore_unavailable": "true",
+                "include_global_state": false,
+                "rename_pattern": "logstash-event-login",
+                "rename_replacement": "restore_logstash-event-login"
+            }'
+        ```
+    - 参数 rename_pattern 和 rename_replacement 用来正则匹配要恢复的索引，并且重命名。下面的例子：test-index => copy_index, test_2 => coyp_2
+        ```
+            curl -XPOST "http://localhost:9200/_snapshot/my_repository/snap_1/_restore?wait_for_completion=true&pretty" -d '
+            {
+                "indices": "test-index,test-2",
+                "ignore_unavailable": "true",
+                "include_global_state": false,
+                "rename_pattern": "test-(.+)",
+                "rename_replacement": "copy_$1"
+            }'
+        ```
+ 5. 使用 elasticdump 进行数据的导入导出
+    - 安装
+        ```
+            npm install elasticdump -g
+        ```
+    - elasticdump 的 input 和 output 都可以指定为 elasticsearch 和文件
+        ```
+            # 导出数据
+            elasticdump --input=http://localhost:9200/logstash-event-login --output=data.json --type=data
+            # 导出mapping
+            elasticdump --input=http://localhost:9200/logstash-event-login --output=mapping.json --type=mapping
+
+            # 导入mapping
+            elasticdump --input=mapping.json --output=http://localhost:9200/elasticdump-event-login --type=mapping
+            # 导入数据
+            elasticdump --input=data.json --output=http://localhost:9200/elasticdump-event-login --type=data
+        ```
+
+## Elasticsearch 常用参数
+ 1. ?pretty
+    - 查询JSON结果美化
+ 2. ?v
+    - 
+ 3. ?help
+    - 查看命令帮助说明 
+    curl http://10.70.93.94:9200/_cat/master?help
+
+## Elasticsearch 数据表(索引|index)的增删改
+ 1. 添加索引(数据表|index)
+    - 例: 创建一个叫做 blogs 的索引, 配置 settings 可以查看详细配置设置, 根据主机硬件情况不同而定
+        ```
+            curl -XPUT -H 'Content-Type: application/json' 'http://127.0.0.1:9200/blogs?pretty' -d '{
+                "settings":{
+                    "number_of_shards":3,
+                    "number_of_replicas":1
+                }
+            }'
+        ```
+
+ 2. 删除索引(数据表|index)
+    - 删除某个索引
+        ```
+            curl -XDELETE http://127.0.0.1:9200/my_index
+        ```
+    - 删除多个索引
+        ```
+            curl -XDELETE http://127.0.0.1:9200/my_index_1,my_index_2,my_index_3
+            curl -XDELETE http://127.0.0.1:9200/my_index_*
+        ```
+    - 甚至可以删除所有索引
+        ```
+            curl -XDELETE http://127.0.0.1:9200/_all
+        ```
+
+ 3. 更新表结构,数据结构(数据表|index)
+    - ES 中不允许修改 表结构, 比如: 将 time 由 date 格式改为 int|时间戳格式 是不可以的
+    - 不过可以通过 PUT 增加表字段, ES 可以新增字段, 不可以更改表字段类型
+    - 例:
+        ```
+            curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs/_mapping?pretty -d '{"my_type":{"properties":{"created":{"type":"multi_field","fields":{"created":{"type":"string"},"date":{"type":"date"}}}}}}'
+
+            # 设置 created_at 字段的 fielddata 为 true
+            curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/book/book/_mapping?pretty -d '{"properties":{"created_at":{"type":"text","fielddata":true}}}'
+
+            # 新增 type:date 类型的cread字段
+            curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/book/book/_mapping?pretty -d '{"properties":{"cread":{"type":"date", "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis"}}}'
+
+        ```
+    - ES 中所有 type; String, Numeric, Numeric, Boolean, Binary, Range 为核心类型
+        1. String: 包含 text, keyword
+        2. Numeric: 包含 long, integer, short, byte, double, float, half_float, scaled_float 每种的存储空间都是不一样的
+        3. Numeric: 包含 date
+        4. Boolean: 包含 boolean
+        5: Binary: 包含 binary
+        6: Range: integer_range, float_range, long_range, double_range, date_range
+        7: IP: ip
+        8: 除以上核心类型外还有其他类型如: Array, Object, Nested, Geo-point, Geo-shape, IP, Completion, Token_count , mapper_murmur3, Percolator, join 等类型, 具体看手册
+
+
+
+
+
+## Elasticsearch 中 _index, _type 和 _id
+ 1. 请记住， _index 、 _type 和 _id 的组合可以唯一标识一个文档。所以，确保创建一个新文档的最简单办法是，使用索引请求的 POST 形式让 Elasticsearch 自动生成唯一 _id
+ 2. 6.0的版本不允许一个index, 下面有多个type 5.0的版本里面还允许, mapping types这个操作在7.0里面将被删除掉
+ 3. 一个 _index 对应一个 _type
+ 4. 在一个已经存在的 _index 中的 已存在的 _type 增加字段
+    - 例: 在 blogs{index} 中的1{type} 中 结构新增 english_title
+    ```
+        curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs/_mapping/1 -d '{"1":{"properties":{"english_title":{"type":"text","analyzer":"english"}}}}'
+    ```
+ 5. PS 注: 如果在同一个index 的同 type 中几次新增的数据格式不同, 即字段不同, 那么ES 会自动合并多次的字段到 对应 _type 的 _mapping( 中,表结构 ) 这样,如果新增一条跟以前不同字段格式的数据, 其实也就默认修改了本type的表结构, 因此本质上保证同一个 _type 的 _mapping 的格式是相同的
+ 6. 删除type: 直接删除index 即可, 7.0 以后 关于 _type 的这个操作都已经删除掉了
+ 7. 当相应 _type 中的内容为空时, 即还没有内容时: 直接使用```curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs/_mapping/{typename}``` 会报错, 不过可以查看blogs(index)的_mapping ```curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs/_mapping/```
+
+
+## Elasticsearch 文档操作 - 增删改
+ 1. 新增文档有以下几种方法 
+    - POST /{_index}/{_type} -d '{文档body-json}'; 推荐
+    - PUT /{_index}/{_type}/_create -d '{文档body-json}'; PS:注, 用这个 version 总是增加
+    - PUT /{index}/文档主键id?op_type=create -d '{文档body-json}'
+    ```
+        curl -XPOST -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs/type_v1 -d '{"name":"John Smith","age":42,"confirmed":true,"join_date":"2014-06-01","home":{"lat":51.5,"lon":0.1},"accounts":[{"type":"facebook","id":"johnsmith"},{"type":"twitter","id":"johnsmith"}]}'
+
+        curl -XPOST -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs/1 -d '{"name_1":"John Smith","english_title_21":"wodeeddee_2","age_3":42,"confirmed":true,"join_date":"2014-06-01","home":{"lat":51.5,"lon":0.1},"accounts":[{"type":"facebook","id":"johnsmith"},{"type":"twitter","id":"johnsmith"}]}'
+
+        curl -XPUT -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs?op_type=create -d '{"name":"John Smith","age":42,"confirmed":true,"join_date":"2014-06-01","home":{"lat":51.5,"lon":0.1},"accounts":[{"type":"facebook","id":"johnsmith"},{"type":"twitter","id":"johnsmith"}]}'
+
+
+        curl -XPOST -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs/1?op_type=create -d '{"name":"John Smith","age":42,"confirmed":true,"join_date":"2014-06-01","home":{"lat":51.5,"lon":0.1},"accounts":[{"type":"facebook","id":"johnsmith"},{"type":"twitter","id":"johnsmith"}]}'
+    ```
+
+ 2. 增加自定义_id 的文档
+    - POST /{_index}/{_type}/{_id} -d '{文档body-json}'; 推荐
+        ```
+            curl -XPOST -H 'Content-Type: application/json' http://127.0.0.1:9200/blogs/type_v1/123 -d '{"name":"John Smith","age":42,"confirmed":true,"join_date":"2014-06-01","home":{"lat":51.5,"lon":0.1},"accounts":[{"type":"facebook","id":"johnsmith"},{"type":"twitter","id":"johnsmith"}]}'
+        ```
+
+ 3. 删除文档
+    - 根据ID删除文档: DELETE /{_index}/{_type}/{_id}
+    ```
+        curl -XDELETE http://127.0.0.1:9200/blogs/type_v1/4o73iGQB7GHQmPOz501B
+
+        curl -X DELETE "http://127.0.0.1:9200/book/book/22229" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json"
+    ```
+    - 根据条件删除文档: DELETE /{_index}/{_type}/_query 或 POST {index}/_delete_by_query -d '{query条件主体}'
+        1. PS 注: 这两个命令没有尝试
+
+ 4. 更新文档
+    - 先删除 在添加, 没有更新命令
+    - 封装的SDK 或者其他地方有一个函数或方法可以实现, 本质起始还是两个请求, 先删除再添加
+
+ 5. 更新文档: 在 ES6 版本以后, 可以使用 _update 关键字进行更新
+    - 例:
+        ```
+            curl -X POST "http://127.0.0.1:9200/book/book/22229/_update" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"doc":{"id":22229,"name":"eeeeaf","desc":"qqq","status":3,"created_at":"2018-07-25 18:16:18"}}'
+        ```
+    - 在 ES6 版本以后, 直接 POST 同一个 _id 的内容, 也会被更新. 如下的添加语句, 如果在表中已经存在, 也会出发文档更新. 例:
+        ```
+            curl -X PUT "http://127.0.0.1:9200/book/book/22229" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"id":22229,"name":"eeeeaf","desc":"nsnn","status":3,"created_at":"2018-07-25 18:16:18"}'
+        ```
+
+ 6. 批量创建文档
+    - ES bulk 批量更新, 使用bulk命令时, REST API以 _bulk 结尾 , 批量操作写在json文件中
+    - 例: 在使用 curl 多行 body 的时候把每一行的空格缩进去掉不然可能会报错
+        ```
+            curl -X POST "http://127.0.0.1:9200/_all/_bulk" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"index":{"_id":1,"_type":"book","_index":"book"}}
+            {"id":1,"name":"\u6d4b\u8bd5","desc":"i\u5965\u6570","status":1,"created_at":"2018-07-25 15:53:48"}
+            {"index":{"_id":2,"_type":"book","_index":"book"}}
+            {"id":2,"name":"omen","desc":"\u4e2d\u6587\u5206\u8bcd","status":0,"created_at":"2018-07-25 15:53:56"}
+            {"index":{"_id":3,"_type":"book","_index":"book"}}
+            {"id":3,"name":"php","desc":"study","status":0,"created_at":"2018-07-25 15:54:07"}
+            {"index":{"_id":4,"_type":"book","_index":"book"}}
+            {"id":4,"name":"hehe","desc":"what","status":0,"created_at":"2018-07-25 15:54:11"}
+            {"index":{"_id":5,"_type":"book","_index":"book"}}
+            {"id":5,"name":"hello","desc":"in the world","status":0,"created_at":"2018-07-25 15:54:17"}
+            {"index":{"_id":6,"_type":"book","_index":"book"}}
+            {"id":6,"name":"qq","desc":"qq","status":1,"created_at":"2018-07-25 16:43:20"}
+            '
+        ```
+ 7. 批量删除
+    - ES 利用 _bulk 批量删除
+    - 例: 在使用 curl 多行 body 的时候把每一行的缩进去掉不然可能会报错
+        ```
+            curl -X POST "http://127.0.0.1:9200/_all/_bulk" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"delete":{"_id":21,"_type":"book","_index":"book"}}
+            {"delete":{"_id":22,"_type":"book","_index":"book"}}
+            {"delete":{"_id":23,"_type":"book","_index":"book"}}
+            {"delete":{"_id":24,"_type":"book","_index":"book"}}
+            '
+        ```
+
+## Elasticsearch 简单查询, 所有查询后都可以跟上 ?pretty 参数, 美化返回的json结果
+ 1. 普通查询
+    - GET /{_index}/_search 推荐; 或 GET /{_index}/{_type}/_search( 新版本已经删除关于 _type 的操作了, 这种方式不要用了 )
+        ```
+            curl -XGET http://127.0.0.1:9200/blogs/_search?pretty
+        ```
+ 2. 分页参数: from 和 size
+    - size: 结果数: 默认10
+    - from: 跳过开始的结果数, 默认0, 类似 offset
+    - 例如: 如果你想每页显示5个结果，页码从1到3，那请求如下：
+        ```
+            GET /_search?size=5
+            GET /_search?size=5&from=5
+            GET /_search?size=5&from=10
+
+            # 还可以将参数放到 请求body中, 如下
+            curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"size":2,"from":1}'
+        ```
+ 3. 简易搜索
+    - 在项目实际应用中起始用的并不多, 更多的是使用统一的API请求体搜索, 但是了解这个的使用对于测试和开发模式快速检测有一定帮助, 部分示例如下:
+    ```
+        # 返回包含 "mary" 字符的所有文档的简单搜索
+        GET /_search?q=mary
+        
+        #  查询 tweet 字段中包含 elasticsearch 字符的文档
+        /_search?q=tweet:elasticsearch
+        
+        # 查找 name 字段中包含 "john" 和 tweet 字段包含 "mary" 的结果, GET中q的值需要urlencode, 合并前示例为: +name:john +tweet:mary
+        GET /_search?q=%2Bname%3Ajohn+%2Btweet%3Amary
+        
+        # name 字段包含 "mary" 或 "john", date 晚于 2014-09-10, _all 字段包含 "aggregations" 或 "geo"
+        +name:(mary john) +date:>2014-09-10 +(aggregations geo)
+        编码后的查询字符串变得不太容易阅读：
+        ?q=%2Bname%3A(mary+john)+%2Bdate%3A%3E2014-09-10+%2B(aggregations+geo)
+        
+    ```
+    
+    - 若没有指定字段，查询字符串搜索（即q=xxx） 使用 _all( 所有字段 ) 字段搜索
+    
+    - "+" 前缀表示语句匹配条件必须被满足。类似的 "-" 前缀表示条件必须不被满足。所有条件, 如果没有 + 或 - 表示是可选的——匹配越多，相关的文档就越多。每一个条件之间用空格隔开, 示例见上面的例子
+    
+
+## Elasticsearch 结构化查询, API请求体查询
+ 1. 结构化查询 Query DSL
+    - 可以支持 GET/POST 方式 的 url + header + body 的方式的查询. PS: 其实GET也可以像POST一样支持body的携带, 这一块更多以示例的方式进行表达
+    ```
+        # 查询所有文档
+        GET /_search
+        {
+            "query": YOUR_QUERY_HERE
+        }
+        
+        # 简单条件查询( 查询 createtime>1543593600 AND createtime<1546185600 AND query_type=98 的数据 )
+        /_search?q=createtime:>1543593600+createtime:<1546185600+query_type:98
+        
+        # 空查询 - {} - 在功能上等同于使用 match_all 查询子句，正如其名字一样，匹配所有的文
+        GET /_search
+        {
+            "query": {
+                "match_all": {}
+            }
+        }
+        
+        # 使用 match 查询子句用来找寻在 tweet 字段中找寻包含 elasticsearch 的成员, 完整的查询：
+        GET /_search
+        {
+            "query": {
+                "match": {
+                    "tweet": "elasticsearch"
+                }
+            }
+        }
+
+        # 以下实例查询的是邮件正文中含有“business opportunity”字样的星标邮件或收件箱中正文中含有“business opportunity”字样的非垃圾邮件：
+        {
+            "bool": {
+                "must": {
+                    "match": {
+                        "email": "business opportunity"
+                    }
+                },
+                "should": [
+                    {
+                        "match": {
+                            "starred": true
+                        }
+                    },
+                    {
+                        "bool": {
+                            "must": {
+                                "folder": "inbox"
+                            },
+                            "must_not": {
+                                "spam": true
+                            }
+                        }
+                    }
+                ],
+                "minimum_should_match": 1
+            }
+        }
+        
+    
+    ```
+
+    - 叶子子句(leaf clauses)(比如 match 子句)用以在将查询字符串与一个字段(或多字段)进行比较
+
+    - 复合子句(compound)用以合并其他的子句。例如， bool 子句允许你合并其他的合法子句， must ， must_not 或者 should
+
+    - 一条查询语句会计算每个文档与查询语句的相关性，会给出一个相关性评分 _score ，并且按照相关性对匹配到的文档进行排序
+
+    - 复合子句的关键词
+        - term 过滤 term 主要用于精确匹配哪些值，比如数字，日期，布尔值或 not_analyzed 的字符串(未经分析的文本数据类型)
+        - terms 过滤 terms 跟 term 有点类似，但 terms 允许指定多个匹配条件。 如果某个字段指定了多个值，那么文档需要一起去做匹配：
+        - 一定要了解 term 和 terms 是 包含（contains） 操作，而非 等值（equals） （判断）。 如何理解这句话呢？包含，而不是相等. 例:
+            ```
+                # 搜索:
+                { "term" : { "tags" : "search" } }
+
+                # 它会与以下两个文档 同时 匹配
+                { "tags" : ["search"] }
+                { "tags" : ["search", "open_source"] }
+
+                # 尽管第二个文档包含除 search 以外的其他词，它还是被匹配并作为结果返回。
+            ```
+
+        - 精确相等
+            1. 如果一定期望得到我们前面说的那种行为（即整个字段完全相等），最好的方式是增加并索 - 另一个字段
+            2. 这个字段用以存储该字段包含词项的数量，同样以上面提到的两个文档为例，现在我们包括了一个维护标签数的新字段, 例：
+            ```
+                # 数据 增加 tag_count 字段, 字段为 tags 的词量
+                { "tags" : ["search"], "tag_count" : 1 }
+                { "tags" : ["search", "open_source"], "tag_count" : 2 }
+
+                # 查询语句如下: 
+                GET /my_index/my_type/_search
+                {
+                    "query": {
+                        "constant_score" : {
+                            "filter" : {
+                                 "bool" : {
+                                    "must" : [
+                                        { "term" : { "tags" : "search" } }, 
+                                        { "term" : { "tag_count" : 1 } } 
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            ```
+
+
+        - range 过滤 range 过滤允许我们按照指定范围查找一批数据, 范围操作符包含：
+            ```
+                gt :: 大于
+                gte :: 大于等于
+                lt :: 小于
+                lte :: 小于等于
+            ```
+        - exists 和 missing 过滤, exists 和 missing 过滤可以用于查找文档中是否包含指定字段或没有某个字段，类似于SQL语句中的 IS_NULL 条件. 这两个过滤只是针对已经查出一批数据来，但是想区分出某个字段是否存在的时候使用
+        
+        - match_all 查询, 使用 match_all 可以查询到所有文档，是没有查询条件下的默认语句.
+            ```
+                {
+                    "match_all": {}
+                }
+                # 此查询常用于合并过滤条件。 比如说你需要检索所有的邮箱,所有的文档相关性都是相同的，所以得到的 _score 为1
+            ```
+
+        - match 查询. match 查询是一个标准查询，不管你需要全文本查询还是精确查询基本上都要用到它.
+            1. 如果你使用 match 查询一个全文本字段，它会在真正查询之前用分析器先分析 match 一下查询字符
+            2. 如果用 match 下指定了一个确切值，在遇到 数字，日期，布尔值 或者 not_analyzed 的字符串时，它将为你搜索你给定的值. 例如:
+            ```
+                # 搜索匹配
+                {
+                    "match": {
+                        "tweet": "About Search"
+                    }
+                }
+
+                # 在遇到数字，日期，布尔值或者 not_analyzed 的字符串时，它将为你搜索你给定的值
+                { "match": { "age": 26 }}
+                { "match": { "date": "2014-09-01" }}
+                { "match": { "public": true }}
+                { "match": { "tag": "full_text" }}
+            ```
+
+        - bool 过滤 bool 过滤可以用来合并多个过滤条件查询结果的布尔逻辑，它包含一下操作符：
+            1. must :: 多个查询条件的完全匹配,相当于 and 。
+            2. must_not :: 多个查询条件的相反匹配，相当于 not 。
+            3. should :: 至少有一个查询条件匹配, 相当于 or 
+            
+            ```
+                # 例:
+                {
+                    "bool": {
+                        "must": {
+                            "term": {
+                                "folder": "inbox"
+                            }
+                        },
+                        "must_not": {
+                            "term": {
+                                "tag": "spam"
+                            }
+                        },
+                        "should": [
+                            {
+                                "term": {
+                                    "starred": true
+                                }
+                            },
+                            {
+                                "term": {
+                                    "unread": true
+                                }
+                            }
+                        ]
+                    }
+                }
+            ```
+
+    - 我们用 constant_score 将 term 查询转化成为过滤器
+        ```
+        {
+            "query" : {
+                "constant_score" : {
+                    "filter" : {
+                        "term" : {
+                            "productID" : "XHDK-A-1293-#fJ3"
+                        }
+                    }
+                }
+            }
+        }
+        ```
+
+    - 复合过滤
+        ```
+        {
+           "query" : {
+              "filtered" : {
+                 "filter" : {
+                    "bool" : {
+                      "should" : [
+                        { "term" : {"productID" : "KDKE-B-9947-#kL5"}}, 
+                        { "bool" : { 
+                          "must" : [
+                            { "term" : {"productID" : "JODL-X-1937-#pV7"}}, 
+                            { "term" : {"price" : 30}} 
+                          ]
+                        }}
+                      ]
+                   }
+                 }
+              }
+           }
+        }
+        ```
+
+    - 验证查询 使用 _validate 关键字, 验证查询语句是否合法可用. 使用如下: _validate/query, 配合 explain 参数, 可以更好的理解错误参数
+        ```
+            GET /_validate/query?explain
+            {
+                "query": {
+                    "match": {
+                        "tweet" : "really powerful"
+                    }
+                }
+            }
+        ```
+
+    - 查询中结合 sort 进行排序, sort 在 查询结构中与 query 是同一个级别, sort下可以有多个字段. _score: 相关性分值, 默认为_score倒序. 例如:
+        ```
+            GET /_search
+            {
+                "query" : {
+                    "filtered" : {
+                        "query": { "match": { "tweet": "manage text search" }},
+                        "filter" : { "term" : { "user_id" : 2 }}
+                    }
+                },
+                "sort": [
+                    { "date": { "order": "desc" }},
+                    { "_score": { "order": "desc" }}
+                ]
+            }
+        ```
+
+    - 排序还可以, 从多个值中取出一个来进行排序, 使用 min, max, avg 或 sum 来排序. 例:
+        ```
+            "sort": {
+                "dates": {
+                    "order": "asc",
+                    "mode": "min"
+                }
+            }
+        ```
+
+    - 即完整的 not_analyzed 字符串(译者注：未经分析器分词并排序的原字符串)。 当然我们需要对字段进行全文本搜索的时候, 还必须使用被 analyzed 标记的字段. 修改 mapping, 多值mapping配置, 
+        ```
+            # 之前 mapping
+            "tweet": {
+                "type": "string",
+                "analyzer": "english"
+            }
+
+            # 之后的 mapping, 增加 多值 raw, 并设为 not_analyzed
+            "tweet": {
+                "type": "string",
+                "analyzer": "english",
+                "fields": {
+                    "raw": {
+                        "type": "string",
+                        "index": "not_analyzed"
+                    }
+                }
+            }
+
+            # tweeet 可正常使用并排序, 增加 tweet.raw 可以作为 not_analyzed 索引方式排序
+            GET /_search
+            {
+                "query": {
+                    "match": {
+                        "tweet": "elasticsearch"
+                    }
+                },
+                "sort": "tweet.raw"
+            }
+
+            # 警告: 对 analyzed 字段进行强制排序会消耗大量内存
+        ```
+
+    - explain 参数可以让返回结果添加一个 _score 评分的得来依据。
+        ```
+            GET /_search?explain
+            {
+                "query" : { "match" : { "tweet" : "honeymoon" }}
+            }
+            
+            # 增加一个 explain 参数会为每个匹配到的文档产生一大堆额外内容, _source, _explanation
+        ```
+
+        - ElasticSearch的相似度算法被定义为 TF/IDF，即检索词频率/反向文档频率, 包括:
+            1. 检索词频率: tf(freq=1.0), with freq of
+            2. 反向文档频率: idf(docFreq=1, maxDocs=1)
+            3. 字段长度准则: fieldNorm
+
+    - 在查询中使用 ?fields=_source 引发的报错, 在使用 fields=_source 时要确认 _mapping 中已经配置 _source, 不然会报错 
+        ```
+            curl -X GET "http://127.0.0.1:9200/book/book/_search?fields=_source%2C_timestamp" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"_source":{"include":"name"},"query":{"match":{"name":"php"}}}'
+        ```
+
+    - 查询 - 常用格式
+        ```
+            // post 的 body 主体内容
+            'body' => array(
+                // query 查询, query 查询是可以嵌套的, 一个 query 可以下有filtered, filtered 可以继续嵌套 query
+                'query' => array(
+                    // 查询, query 中可以嵌套 boole
+                    'match' => array(
+                        'name' => 'php'
+                    ),
+                    // 过滤 - 可以嵌套 filter, bool, must, term, range, exists 和 missing 等
+                    'filtered / constant_score' => array(),
+                ),
+                // 分组
+                'aggs' => '',
+                // 排序
+                'sort' => '',
+                // 分页 limit
+                'size' => 2,
+                // 分页 offset
+                'from' => 2,
+
+            );
+        ```
+
+    - 聚合, aggs / aggregations 字段( 分组, 聚合 统计 ) 的说明. 
+        - ES中的聚合概念: 
+            1. 桶（Buckets）满足特定条件的文档的集合
+            2. 指标（Metrics）对桶内的文档进行统计计算
+            3. 例如:
+                ```
+                    # 概念类比:
+                    
+                    SELECT COUNT(color) FROM table GROUP BY color 
+
+                    # COUNT(color) 相当于指标。
+                    # GROUP BY color 相当于桶。
+                ```
+        - 用 terms 桶操作 示例:
+            ```
+                GET /cars/transactions/_search
+                {
+                    "size" : 0,
+                    "aggs" : { 
+                        "popular_colors" : { 
+                            "terms" : { 
+                              "field" : "color"
+                            }
+                        }
+                    }
+                }
+
+                # 聚合操作被置于顶层参数 aggs 之下（如果你愿意，完整形式 aggregations 同样有效）。
+                # 然后，可以为聚合指定一个我们想要名称，本例中是： popular_colors 。
+                # 最后，定义单个桶的类型 terms 。
+
+                # 返回如下:
+                {
+                ...
+                   "hits": {
+                      "hits": [] 
+                   },
+                   "aggregations": {
+                      "popular_colors": { 
+                         "buckets": [
+                            {
+                               "key": "red", 
+                               "doc_count": 4 
+                            },
+                            {
+                               "key": "blue",
+                               "doc_count": 2
+                            },
+                            {
+                               "key": "green",
+                               "doc_count": 2
+                            }
+                         ]
+                      }
+                   }
+                }
+
+                # 因为我们设置了 size 参数，所以不会有 hits 搜索结果返回。
+                # popular_colors 聚合是作为 aggregations 字段的一部分被返回的。
+                # 每个桶的 key 都与 color 字段里找到的唯一词对应。它总会包含 doc_count 字段，告诉我们包含该词项的文档数量。
+                # 每个桶的数量代表该颜色的文档数量。
+            ```
+
+        - 聚合常用 方式与关键字
+            1. 度量关键字 Metrics
+                - avg: 平均值
+                - sum: 求和
+                - min: 最小
+                - max: 最大
+                - terms: 类似于 group by 分组, 返回二维 [ key=>'分组的字段值', doc_count=>'当前组内数量' ]
+                - cardinality: 去重后的count值;  cardinality的作用是先执行类似SQL中的distinct操作，然后再统计排重后集合长度。得到的结果是一个近似值，因为考虑到在大量分片中排重的性能损耗Cardinality算法并不会load所有的数据。
+                - stats: 返回聚合分析后所有有关stat的指标。具体哪些是stat指标是ES定义的. 共有5项: count, min, max, avg, sum
+                - extended_stats: 返回聚合分析后所有指标，比stats多四个统计结果：sum_of_squares|平方和、variance|方差、std_deviation|标准差, (std_deviation_bounds=>[upper,lower]|标准差范围), ES6 多四个, 其他老版本可能没有std_deviation_bounds(标准差范围)
+                - percentiles: 百分位法统计, 在xxx内的占xx%，xxx内的占xx%，等等。还可以指定百分位的指标，比如只想统计95%、99%、99.9%的数据, 例如:
+                    ```
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"percentiles":{"field":"status","percents":[95,99,99.9]}}}}'
+                    ```
+                - percentile_ranks: percentile API中，返回结果values中的key是固定的0-100间的值，而percentile_ranks返回值中的value才是固定的，而且必须制定value, 即要聚合的维度. 同样也是0到100。例如: status 在小于 0,3,5,8的百分比状态情况。
+                    ```
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"percentile_ranks":{"field":"status","values":[0,3,5,8]}}}}'
+                    ```
+
+            2. 桶关键字 Bucket
+                - filter: 先过滤后聚合，类似SQL中的where，也有点象group by后加having。fitler 内结合term, 来标识符合的内容。使用 filter 后 默认带有 doc_count 字段返回值, 为匹配到的文档数量. 例:
+                    ```
+                        # 查找 match: name:php的所有数据(hits 中展示全部数据). 对这些数据进行如下分析: 过滤:满足desc=nsnn 的所有数据, 统计这些数据中status的 avg(以status_avg_num呈现) 和 sum(以status_sum_num呈现)
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"filter":{"term":{"desc":"nsnn"}},"aggs":{"status_avg_num":{"avg":{"field":"status"}},"status_sum_num":{"sum":{"field":"status"}}}}}}'
+                    ```
+                - range: 反映数据的分布情况，比如我想知道小于2，2到5, 大于5的数据的个数。使用 range 后 默认带有 doc_count 字段返回值, 为匹配到的文档数量。 range 内嵌套 ranges 通过 from, to 关键字来说明想要的范围区间 例:
+                    ```
+                        # 查找 match: name:php的所有数据(hits 中展示全部数据). 对这些数据进行如下分析: 小于2，2到5, 大于5的数据的个数, 统计这些区间中status的 avg(以status_avg_num呈现) 和 sum(以status_sum_num呈现)
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"range":{"field":"status","ranges":[{"to":2},{"from":2,"to":5},{"from":5}]},"aggs":{"status_avg_num":{"avg":{"field":"status"}},"status_sum_num":{"sum":{"field":"status"}}}}}}'
+                    ```
+
+                - missing: 我们想找出price字段值为空的文档的个数, 文档中不存在price字段的数量
+                    ```
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"missing":{"field":"price"}}}}'
+                    ```
+                - terms: 针对某个字段排重后统计个数, 类似于 group by + count. terms 每组默认返回值中携带: key(值)和doc_count(个数)
+                    ```
+                        # 对 status 分组, 并获取计个数.
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"terms":{"field":"status"}}}}'
+                    ```
+                - date_range: 针对日期型数据做分布统计. PS: 注: 如果要使用 date_range, 对应的聚合字段 的 _mapping 类型必须为: date 
+                    ```
+                        # 使用时报错了: Fielddata is disabled on text fields by default. Set fielddata=true on [ipaddr] in order to load fielddata in memory by uninverting ....
+
+                        # 如果包上面的错误. 跟 _mapping 设置有关系, 查看 _mapping 说明: created_at 的type格式并不是 date 格式. 因此会报错, 而且 ES 并不允许对现有字段修改 type 格式, 只有新增一个字段 或者重建索引才可以.
+
+                        # 用 ES 在不管或者默认的情况下, 推送数据过去, 时间字段 timestamp和datetime 会被当作 type:text 格式来对待, 因此这类字段的格式要单独设置 或者单独 PUT 字段格式, PUT新增 _mapping 格式可以参考上面 _mapping 的例子
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"date_range":{"field":"created_at","format":"MM-yyy","ranges":{"to":"now-10M\/M","from":"now-10M\/M"}}}}}'
+                    ```
+
+                - global_aggregation: 指定聚合的作用域与查询的作用域没有关联。因此返回结果中query命中的文档，与聚合的的统计结果是没有关系的。在 aggs 中 使用 global 关键字。例如: 
+                    ```
+                        # 增加 global: {} , 使 聚合与查询query不相关, 单独设置聚合作用域, ps:laravel框架 对global=>[], 转义为 global:{}有问题, 它会转以为:global:[] 而报错
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"global":{},"aggs":{"avg_status":{"avg":{"field":"status"}}}}}}'
+
+                        {
+                            "query": {
+                                "match": {
+                                    "title": "shirt"
+                                }
+                            },
+                            "aggs": {
+                                "all_products": {
+                                    "global": {},
+                                    "aggs": {
+                                        "avg_price": {
+                                            "avg": {
+                                                "field": "price"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    ```
+
+                - histogram: 跟range类似，不过Histogram不需要你指定统计区间，只需要提供一个间隔区间的值。每个区间固定返回 doc_count 文档数量值。好象不太好理解，看个例子就全明白了。比如，以50元为一个区间，统计每个区间内的价格分布, 例:
+                    ```
+                        # 以 2 为间隔, 统计 status 分布0-2, 2-4, 4-6 .... 数量
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"histogram":{"field":"status","interval":2}}}}'
+                    ```
+
+                - date_histogram: 使用方法与 histogram 类似，只是聚合的间隔区间是针对时间类型的字段。
+                    ```
+                        # 例: 以create_at字段为标准, 时间间隔要求是日历术语 (如每个 bucket 1 个月: month)。
+                        # 我们提供 format 日期格式 以便 buckets 的键值便于阅读。format可以不用
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"date_histogram":{"field":"create_at","interval":"month","format":"yyyy-MM-dd"}}}}'
+                    ```
+                
+                - ip_ranges: 由于ES是一个企业级的搜索和分析的解决方案，在做大量数据统计分析时比如用户访问行为数据，会采集用户的IP地址，类似这样的数据(还有地理位置数据等)，ES也提供了最直接的统计接口。 PS: 注: 如果要使用 ip_ranges, 对应的聚合字段 的 _mapping 类型必须为: ip 例:
+                    ```
+                        # 使用时报错了: Fielddata is disabled on text fields by default. Set fielddata=true on [ipaddr] in order to load fielddata in memory by uninverting ....
+                        # 如果报上面的错误 可能跟 _mapping 设置有关系
+
+                        curl -X GET "http://127.0.0.1:9200/book/book/_search" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"query":{"match":{"name":"php"}},"aggs":{"status_agg":{"ip_range":{"field":"ipaddr","ranges":[{"to":"192.168.255.255"},{"from":"192.168.0.0"}]}}}}'
+                    ```
+
+            3. ES中经常使用到的聚合结果集可以被缓存起来，以便更快速的系统响应。这些缓存的结果集和你掠过缓存直接查询的结果是一样的。
+
+            4. 如果只需要 aggregations 数据, 而不需要hit(搜索数据列表), 就直接在查询中设置size=0即可
+
+            5. aggs 下 某个字段, 可以有 date_histogram|terms 等桶聚合语句 和 aggs 中的多个度量; 而且 aggs 中还可以继续增加桶聚合. 大概结构如下:
+                ```
+                    # 基本最小单元格式如下:
+                    {
+                        "aggs": {
+                            "status_agg": {                 // 聚合字段名称
+                                "range": {                  // 桶 聚合方式 range
+                                    "field": "status",
+                                    "ranges": [
+                                        {
+                                            "to": 2
+                                        },
+                                        {
+                                            "from": 2,
+                                            "to": 5
+                                        },
+                                        {
+                                            "from": 5
+                                        }
+                                    ]
+                                },
+                                "aggs": {                   // 本桶下面的 度量方式, 可添加多个, avg, sum 等
+                                    "status_avg_num": {
+                                        "avg": {
+                                            "field": "status"
+                                        }
+                                    },
+                                    "status_sum_num": {
+                                        "sum": {
+                                            "field": "status"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    # 复杂符合维度
+                    {
+                       "size" : 0,
+                       "aggs": {
+                          "sales": {    // 聚合字段名称
+                             "date_histogram": {    // 桶 聚合方式
+                                "field": "sold",    // 桶 聚合方式下的字段
+                                "interval": "quarter",      // 桶 聚合方式下的一些其他设置
+                                "format": "yyyy-MM-dd",
+                                "min_doc_count" : 0,
+                                "extended_bounds" : {
+                                    "min" : "2014-01-01",
+                                    "max" : "2014-12-31"
+                                }
+                             },
+                             "aggs": {      // 在本桶下面的多个度量维度, 而且可以
+                                "per_make_sum": {   // 继续 增加 terms 桶统计维度维度 
+                                   "terms": {
+                                      "field": "make"
+                                   },
+                                   "aggs": {        // 多维度统计, 本桶 terms 下面的 sum 度量数据
+                                      "sum_price": {
+                                         "sum": { "field": "price" } 
+                                      }
+                                   }
+                                },
+                                "total_sum": {          // 上一个桶 date_histogram 的 sum 度量
+                                   "sum": { "field": "price" } 
+                                }
+                             }
+                          }
+                       }
+                    }
+                ```
+
+            6. 后置过滤: post_filter
+                - post_filter 元素是一个顶层元素，只会对搜索结果进行过滤。
+                - 查询部分呢用来找到所有ford汽车。然后我们根据一个terms聚合来得到颜色列表。因为聚合是在查询作用域中进行的，得到的颜色列表会反映出ford汽车的各种颜色。
+                - 最后，post_filter会对搜索结果进行过滤，只显示绿色的ford汽车。这一步发生在执行查询之后，因此聚合是不会被影响的。
+                - 这一点对于维持一致的用户界面而言是非常重要的。假设一个用户在界面上点击了一个分类(比如，绿色)。期望的结果是搜索结果被过滤了，而用户界面上的分类选项是不会变化的。如果你使用了一个filtered查询，用户界面上也立即会对分类进行更新，此时绿色就变成了唯一的选项 - 这显然不是用户想要的！例:
+                    ```
+                        GET /cars/transactions/_search?search_type=count
+                        {
+                            "query": {
+                                "match": {
+                                    "make": "ford"
+                                }
+                            },
+                            "post_filter": {    
+                                "term" : {
+                                    "color" : "green"
+                                }
+                            },
+                            "aggs" : {
+                                "all_colors": {
+                                    "terms" : { "field" : "color" }
+                                }
+                            }
+                        }
+                    ```
+
+
+            7. 桶内 置排序, 按度量排序, 基于“深度”度量排序
+
+## 分布式搜索以后的还未深入研究
+
+
+
+
+
+
+
+ 
+
+
+
+## PS: 注意
+ 1. 服务器中ES服务, 不可以使用 root 用户进行启动, 要新建用户/组, 然后 su 切换用户再启动
+ 2. 在 PHP 中使用 elasticsearch/elasticsearch 的时候, 注意composer插件包与服务器安装的ES服务版本相对应.
+ 3. 在 Laravel 增加使用 elasticquent/elasticquent 的时候, 注意 elasticquent/elasticquent 与 elasticsearch/elasticsearch 这个composer插件包的版本相对应. 
+ 4. 如果有版本对应问题, 可以用 diff 来查看文件的不同处, 进行相应的修改
+ 5. elasticquent/elasticquent 中 使用 searchByQuery 时 自动在/book/_search 后面加了 ?fields=_source%2C_timestamp 的而引起报错的问题. fields=_source%2C_timestamp 时什么意思, 而使用 complexSearch 并没有问题
+
+
+## 问题
+ 1. PUT /{_index}/{_type}/_create -d '{文档body-json}'; PS:注, 用这个 version 总是增加, 使用 post, _credit, _index 新增文档有什么区别 ?
+ 2. 对于如下请求, 中参数带有 ?fields=_source%2C_timestamp 引发的报错:
+    ```
+        curl -X GET "http://127.0.0.1:9200/book/book/_search?fields=_source%2C_timestamp" -H"host: 127.0.0.1:9200" -H"Content-type: application/json" -H"Accept: application/json" -d '{"_source":{"include":"name"},"query":{"match":{"name":"php"}}}'
+    ```
+
+
